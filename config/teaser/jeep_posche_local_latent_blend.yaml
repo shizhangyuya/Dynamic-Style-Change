@@ -1,0 +1,58 @@
+# CUDA_VISIBLE_DEVICES=5 python test_fatezero.py --config config/teaser/jeep_posche_local_latent_blend.yaml
+
+pretrained_model_path: "./ckpt/jeep_tuned_200"
+
+dataset_config:
+    path: "data/teaser_car-turn"
+    prompt: "a silver jeep driving down a curvy road in the countryside,"
+    n_sample_frame: 8
+    sampling_rate: 1
+    stride: 80
+    offset: 
+        left: 0
+        right: 0
+        top: 0
+        bottom: 0
+
+
+editing_config:
+    use_invertion_latents: true
+    use_inversion_attention: true
+    annotate: False
+    editing_prompts: [
+        # a silver jeep driving down a curvy road in the countryside,
+        a Porsche car driving down a curvy road in the countryside,
+    ]
+    p2p_config:
+
+        0:
+            cross_replace_steps: 
+                default_: 0.5
+            self_replace_steps: 0.5
+            
+            use_inversion_attention: True
+            is_replace_controller: True
+
+            blend_words: [['silver', 'jeep'], ["Porsche", 'car']] # for local edit. If it is not local yet - use only the source object: blend_word = ((('cat',), ("cat",))).
+            blend_self_attention: True
+            blend_latents: True
+            blend_th: [0.3, 0.3]
+            
+    clip_length: "${..dataset_config.n_sample_frame}"
+    sample_seeds: [0]
+
+    num_inference_steps: 50
+    prompt2prompt_edit: True
+
+    
+model_config:
+    lora: 160
+
+
+test_pipeline_config:
+    target: video_diffusion.pipelines.p2p_ddim_spatial_temporal.P2pDDIMSpatioTemporalPipeline
+    num_inference_steps: "${..validation_sample_logger.num_inference_steps}"
+
+
+
+seed: 0

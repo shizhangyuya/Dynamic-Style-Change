@@ -1,0 +1,5 @@
+*
+!teaser_car-turn
+!teaser_car-turn/*
+!.gitignore
+!*.sh
