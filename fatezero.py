@@ -56,6 +56,7 @@ def function_test(
         batch_size: int = 1,
         model_config: dict = {},
         verbose: bool = True,
+        total_frame_num=32,
         **kwargs
 
 ):
@@ -139,7 +140,10 @@ def function_test(
         max_length=tokenizer.model_max_length,
         return_tensors="pt",
     ).input_ids
-    video_dataset = ImageSequenceDataset(**dataset_config, prompt_ids=prompt_ids)
+    one_image_dataset_config=dataset_config
+    one_image_dataset_config['n_sample_frame']=1
+    video_dataset = ImageSequenceDataset(**one_image_dataset_config, prompt_ids=prompt_ids)
+    #video_dataset = ImageSequenceDataset(**on, prompt_ids=prompt_ids)
 
     train_dataloader = torch.utils.data.DataLoader(
         video_dataset,
@@ -220,7 +224,7 @@ def function_test(
             save_path=logdir if verbose else None
         )
 
-        batch['ddim_init_latents'] = batch['latents_all_step'][-1]
+        batch['ddim_init_latents'] = batch['latents_all_step'][-1].repeat(1,1,total_frame_num,1,1)
 
     else:
         batch['ddim_init_latents'] = None
@@ -245,7 +249,8 @@ def function_test(
                 step=0,
                 latents=batch['ddim_init_latents'],
                 save_dir=logdir if verbose else None,
-                latents_all=batch["latents_all_step"]
+                latents_all=batch["latents_all_step"],
+                total_frame_num=total_frame_num
             )
         # accelerator.log(logs, step=step)
 

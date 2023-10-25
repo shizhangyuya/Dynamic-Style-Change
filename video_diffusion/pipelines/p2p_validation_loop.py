@@ -72,7 +72,8 @@ class P2pSampleLogger:
         latents: torch.FloatTensor = None,
         uncond_embeddings_list: List[torch.FloatTensor] = None,
         save_dir = None,
-        latents_all=None
+        latents_all=None,
+        total_frame_num=None
     ):
         torch.cuda.empty_cache()
         samples_all = []
@@ -126,6 +127,7 @@ class P2pSampleLogger:
                     uncond_embeddings_list = uncond_embeddings_list,
                     save_path = save_dir,
                     latents_all=latents_all,
+                    total_frame_num=total_frame_num,
                     **p2p_config_now,
                 )
                 if self.prompt2prompt_edit:

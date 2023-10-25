@@ -278,6 +278,7 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
         callback_steps: Optional[int] = 1,
         controller: attention_util.AttentionControl = None,
         latents_all=None,
+        total_frame_num=None,
         **args
     ):
         r"""
@@ -385,58 +386,61 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 7. Denoising loop
+
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
-            for i, t in enumerate(tqdm(timesteps)):
-                # expand the latents if we are doing classifier free guidance
+        for stage in enumerate(tqdm(range(4),desc="Stage-divided Sample")):
+            with self.progress_bar(total=num_inference_steps) as progress_bar:
+                for i, t in enumerate(tqdm(timesteps)):
+                    # expand the latents if we are doing classifier free guidance
 
-                if i == 10:
-                    num_frame=latents.size(2)
-                    #latents维度（1，4，6，64，64）（其中6是frame_number）
-                    #latents_all是保存了invert过程不同timestep的latents列表
-                    source_latents_list = torch.split(latents_all[-(i + 1)], 1, dim=2)
-                    target_latents_list = torch.split(latents, 1, dim=2)
-                    new_latents=[]
-                    for frame in range(num_frame):
-                        source_rate=1.0*(num_frame-frame)/(num_frame-1.)
-                        source_latents=source_latents_list[frame]
-                        target_latents=target_latents_list[frame]
-                        edited_latents=source_rate*source_latents+(1.0-source_rate)*target_latents
-                        new_latents.append(edited_latents)
+                    if i == 40:
+                        #num_frame=latents.size(2)
+                        #latents维度（1，4，6，64，64）（其中6是frame_number）
+                        #latents_all是保存了invert过程不同timestep的latents列表
+                        #source_latents_list = torch.split(latents_all[-(i + 1)], 1, dim=2)
+                        source_latents = latents_all[-(i+1)]
+                        target_latents_list = torch.split(latents, 1, dim=2)
+                        new_latents=[]
+                        for frame in range(total_frame_num):
+                            source_rate=1.0*(total_frame_num-frame)/(total_frame_num-1.)
+                            #source_latents=source_latents_list[frame]
+                            target_latents=target_latents_list[frame]
+                            edited_latents=source_rate*source_latents+(1.0-source_rate)*target_latents
+                            new_latents.append(edited_latents)
 
-                    latents=torch.cat(new_latents,dim=2)
+                        latents=torch.cat(new_latents,dim=2)
 
-                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                    latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                    latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
-                # predict the noise residual
-                noise_pred = self.unet(
-                    latent_model_input, t, encoder_hidden_states=text_embeddings
-                ).sample.to(dtype=latents_dtype)
+                    # predict the noise residual
+                    noise_pred = self.unet(
+                        latent_model_input, t, encoder_hidden_states=text_embeddings
+                    ).sample.to(dtype=latents_dtype)
 
-                # perform guidance
-                if do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    # perform guidance
+                    if do_classifier_free_guidance:
+                        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                        noise_pred = noise_pred_uncond + guidance_scale * (
+                            noise_pred_text - noise_pred_uncond
+                        )
 
-                # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
-                
-                # Edit the latents using attention map
-                if controller is not None: 
-                    dtype = latents.dtype
-                    latents_new = controller.step_callback(latents)
-                    latents = latents_new.to(dtype)
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
-                    progress_bar.update()
-                    if callback is not None and i % callback_steps == 0:
-                        callback(i, t, latents)
-                torch.cuda.empty_cache()
+                    # compute the previous noisy sample x_t -> x_t-1
+                    latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+
+                    # Edit the latents using attention map
+                    if controller is not None:
+                        dtype = latents.dtype
+                        latents_new = controller.step_callback(latents)
+                        latents = latents_new.to(dtype)
+                    # call the callback, if provided
+                    if i == len(timesteps) - 1 or (
+                        (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
+                    ):
+                        progress_bar.update()
+                        if callback is not None and i % callback_steps == 0:
+                            callback(i, t, latents)
+                    torch.cuda.empty_cache()
         # 8. Post-processing
         image = self.decode_latents(latents)
 
