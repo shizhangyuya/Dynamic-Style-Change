@@ -386,9 +386,22 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 7. Denoising loop
-
+        interpolate_method=2
+        stage_num=1
+        init_latents=latents
+        interpolate_latents_list=[]
+        output_latents_list=[]
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
-        for stage in enumerate(tqdm(range(4),desc="Stage-divided Sample")):
+        #7.1 level生成
+
+        #7.2 直接生成
+
+        for stage in tqdm(range(stage_num),desc="Stage-divided Sample"):
+            latents=init_latents
+            all_frame_num=stage_num*total_frame_num
+            start_frame=stage*total_frame_num
+            end_frame=start_frame+total_frame_num
+            controller.cur_step=0
             with self.progress_bar(total=num_inference_steps) as progress_bar:
                 for i, t in enumerate(tqdm(timesteps)):
                     # expand the latents if we are doing classifier free guidance
@@ -401,10 +414,10 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
                         source_latents = latents_all[-(i+1)]
                         target_latents_list = torch.split(latents, 1, dim=2)
                         new_latents=[]
-                        for frame in range(total_frame_num):
-                            source_rate=1.0*(total_frame_num-frame)/(total_frame_num-1.)
+                        for index,frame in enumerate(range(start_frame,end_frame)):
+                            source_rate=1.0*(all_frame_num-frame)/(all_frame_num-1.)
                             #source_latents=source_latents_list[frame]
-                            target_latents=target_latents_list[frame]
+                            target_latents=target_latents_list[index]
                             edited_latents=source_rate*source_latents+(1.0-source_rate)*target_latents
                             new_latents.append(edited_latents)
 
@@ -441,7 +454,10 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
                         if callback is not None and i % callback_steps == 0:
                             callback(i, t, latents)
                     torch.cuda.empty_cache()
+            output_latents_list.append(latents)
+
         # 8. Post-processing
+        latents=torch.cat(output_latents_list,dim=2)
         image = self.decode_latents(latents)
 
         # 9. Run safety checker
