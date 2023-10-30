@@ -1,6 +1,7 @@
 import os
 from glob import glob
 import copy
+import time
 from typing import Optional, Dict
 from tqdm.auto import tqdm
 from omegaconf import OmegaConf
@@ -56,7 +57,7 @@ def function_test(
         batch_size: int = 1,
         model_config: dict = {},
         verbose: bool = True,
-        total_frame_num=32,
+        total_frame_num=6,
         **kwargs
 
 ):
@@ -224,7 +225,7 @@ def function_test(
             save_path=logdir if verbose else None
         )
 
-        batch['ddim_init_latents'] = batch['latents_all_step'][-1].repeat(1,1,total_frame_num,1,1)
+        batch['ddim_init_latents'] = batch['latents_all_step'][-1]#.repeat(1,1,total_frame_num,1,1)
 
     else:
         batch['ddim_init_latents'] = None
@@ -290,4 +291,8 @@ def run():
 
 
 if __name__ == "__main__":
+    start_time=time.time()
     run()
+    end_time=time.time()
+    execution_time = end_time - start_time
+    print(f"代码执行时间为: {execution_time} 秒")

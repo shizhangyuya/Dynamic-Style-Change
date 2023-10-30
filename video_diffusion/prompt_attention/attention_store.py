@@ -93,12 +93,15 @@ class AttentionStore(AttentionControl):
         return attn
 
     def between_steps(self):
-        if len(self.attention_store) == 0:
-            self.attention_store = self.step_store
+        # if len(self.attention_store) == 0:
+        #     self.attention_store = self.step_store
+        if len(self.attention_store) == 0 or (self.cur_step == self.interpolation_timestep+1 and self.invert_stage == False):
+            self.attention_store=self.get_empty_store()
+            self.attention_store= self.step_store
         else:
             for key in self.attention_store:
                 for i in range(len(self.attention_store[key])):
-                    self.attention_store[key][i] += self.step_store[key][i]
+                    self.attention_store[key][i] += self.step_store[key][i]#.repeat(2,1,1,1)
         
         if self.disk_store:
             path = self.store_dir + f'/{self.cur_step:03d}.pt'
@@ -122,6 +125,11 @@ class AttentionStore(AttentionControl):
 
     def __init__(self, save_self_attention:bool=True, disk_store=False):
         super(AttentionStore, self).__init__()
+
+        # self.total_frame_num=6
+        self.invert_stage=False
+        self.interpolation_timestep=0
+
         self.disk_store = disk_store
         if self.disk_store:
             time_string = get_time_string()

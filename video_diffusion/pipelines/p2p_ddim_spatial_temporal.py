@@ -4,7 +4,10 @@ from typing import Callable, List, Optional, Union
 import os, sys
 import PIL
 import torch
+import clip
+from PIL import Image
 import numpy as np
+import torch.nn.functional as F
 from einops import rearrange
 from tqdm import trange, tqdm
 
@@ -26,6 +29,69 @@ from ..models.unet_3d_condition import UNetPseudo3DConditionModel
 from .stable_diffusion import SpatioTemporalStableDiffusionPipeline
 from video_diffusion.prompt_attention import attention_util
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+# 定义Slerp函数
+# 线性插值函数
+def lerp(v0, v1, t):
+    """
+    Linear interpolation between two tensors.
+
+    Args:
+    v0: tensor, the starting point.
+    v1: tensor, the ending point.
+    t: float, interpolation parameter between 0 and 1.
+
+    Returns:
+    tensor: The interpolated tensor.
+    """
+    return (1 - t) * v0 + t * v1
+
+# Slerp插值函数
+def slerp(v0, v1, t):
+    """
+    Spherical linear interpolation between two tensors.
+
+    Args:
+    v0: torch.Tensor, the starting point.
+    v1: torch.Tensor, the ending point.
+    t: float, interpolation parameter between 0 and 1.
+
+    Returns:
+    torch.Tensor: The interpolated tensor.
+    """
+    v0_norm = v0 / v0.norm()
+    v1_norm = v1 / v1.norm()
+    dot = torch.sum(v0_norm * v1_norm)
+    dot = torch.clamp(dot, -1, 1)  # 在[-1,1]之间夹紧dot的值，避免出现NaN
+    theta = torch.acos(dot) * t
+    rel_vec = v1_norm - v0_norm * dot
+    rel_vec = rel_vec / rel_vec.norm()
+    new_dot = torch.cos(theta)
+    new_dot = torch.clamp(new_dot, -1, 1)  # 夹紧新的dot值
+    new_vec = v0_norm * new_dot + rel_vec * torch.sin(theta)
+    return new_vec
+
+# 组合插值函数
+def interpolate(v0, v1, t, method='linear'):
+    """
+    Interpolate between two tensors using the specified method.
+
+    Args:
+    v0: tensor, the starting point.
+    v1: tensor, the ending point.
+    t: float, interpolation parameter between 0 and 1.
+    method: str, method for interpolation, either 'linear' or 'slerp'.
+
+    Returns:
+    tensor: The interpolated tensor.
+    """
+    if method == 'linear':
+        return lerp(v0, v1, t)
+    elif method == 'slerp':
+        return slerp(v0, v1, t)
+    else:
+        raise ValueError("Invalid interpolation method. Please use 'linear' or 'slerp'.")
+
 
 
 class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
@@ -195,7 +261,7 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
                             save_self_attention = kwargs.get('save_self_attention', True),
                             disk_store = kwargs.get('disk_store', False)
                             )
-        
+
         attention_util.register_attention_control(self, edit_controller)
         
 
@@ -279,6 +345,7 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
         controller: attention_util.AttentionControl = None,
         latents_all=None,
         total_frame_num=None,
+        invert_stage=None,
         **args
     ):
         r"""
@@ -391,34 +458,60 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
         init_latents=latents
         interpolate_latents_list=[]
         output_latents_list=[]
+
+        use_clip_image_feature=False
+        if use_clip_image_feature:
+            clip_model, preprocess = clip.load("ViT-B/32")
+            filename='data/bird2.png'
+            image = preprocess(Image.open(filename).convert("RGB"))
+            images=torch.stack([image,],dim=0).cuda()
+
+            clip_model.cuda().eval()
+            with torch.no_grad():
+                clip_class_token,clip_image_features = clip_model.encode_image(images.float())
+            padding=(0,0,0,27,0,0)
+            clip_image_features=F.pad(clip_image_features.repeat(2,1,1),padding,'constant',0)
+            if not invert_stage:
+                text_embeddings=clip_image_features
+
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         #7.1 level生成
 
         #7.2 直接生成
 
+        interpolation_timestep=40
+
+        controller.invert_stage = invert_stage
+
+
         for stage in tqdm(range(stage_num),desc="Stage-divided Sample"):
+            controller.interpolation_timestep = interpolation_timestep
+            if invert_stage:
+                stage=stage_num-1
             latents=init_latents
             all_frame_num=stage_num*total_frame_num
             start_frame=stage*total_frame_num
             end_frame=start_frame+total_frame_num
             controller.cur_step=0
             with self.progress_bar(total=num_inference_steps) as progress_bar:
+                #latents=latents.repeat(1,1,2,1,1)
                 for i, t in enumerate(tqdm(timesteps)):
                     # expand the latents if we are doing classifier free guidance
 
-                    if i == 40:
+                    if i == interpolation_timestep and invert_stage==False:
                         #num_frame=latents.size(2)
                         #latents维度（1，4，6，64，64）（其中6是frame_number）
                         #latents_all是保存了invert过程不同timestep的latents列表
                         #source_latents_list = torch.split(latents_all[-(i + 1)], 1, dim=2)
                         source_latents = latents_all[-(i+1)]
-                        target_latents_list = torch.split(latents, 1, dim=2)
+                        target_latents_list = torch.split(latents.repeat(1,1,total_frame_num,1,1), 1, dim=2)
                         new_latents=[]
                         for index,frame in enumerate(range(start_frame,end_frame)):
-                            source_rate=1.0*(all_frame_num-frame)/(all_frame_num-1.)
+                            source_rate=1.0*(all_frame_num-frame-1)/(all_frame_num-1.)
                             #source_latents=source_latents_list[frame]
                             target_latents=target_latents_list[index]
                             edited_latents=source_rate*source_latents+(1.0-source_rate)*target_latents
+                            #edited_latents = interpolate(target_latents,source_latents,source_rate,method='slerp')
                             new_latents.append(edited_latents)
 
                         latents=torch.cat(new_latents,dim=2)
@@ -430,6 +523,9 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
                     noise_pred = self.unet(
                         latent_model_input, t, encoder_hidden_states=text_embeddings
                     ).sample.to(dtype=latents_dtype)
+                    # noise_pred = self.unet(
+                    #     latent_model_input, t, encoder_hidden_states=clip_image_features
+                    # ).sample.to(dtype=latents_dtype)
 
                     # perform guidance
                     if do_classifier_free_guidance:
@@ -443,8 +539,11 @@ class P2pDDIMSpatioTemporalPipeline(SpatioTemporalStableDiffusionPipeline):
 
                     # Edit the latents using attention map
                     if controller is not None:
+                        #controller.
+                        controller.total_frame_num=total_frame_num
                         dtype = latents.dtype
                         latents_new = controller.step_callback(latents)
+                        print(torch.allclose(latents_new,latents))
                         latents = latents_new.to(dtype)
                     # call the callback, if provided
                     if i == len(timesteps) - 1 or (

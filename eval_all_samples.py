@@ -15,9 +15,9 @@ def load_style_txt(file_path):
 
 def process_json_and_images(data, base_directory, new_directory):
 
-    genre_classes = load_style_txt("genre_class.txt")
-    artist_classes = load_style_txt("artist_class.txt")
-    style_classes = load_style_txt("style_class.txt")
+    genre_classes = load_style_txt("data/genre_class.txt")
+    artist_classes = load_style_txt("data/artist_class.txt")
+    style_classes = load_style_txt("data/style_class.txt")
 
     for key, item in data.items():
         for style_type, classes in [('genre_class', genre_classes), ('artist_class', artist_classes),
@@ -36,7 +36,7 @@ def process_json_and_images(data, base_directory, new_directory):
             new_image_path = os.path.join(new_folder_path, os.path.basename(item["image_path"]))
             shutil.copy2(old_image_path, new_image_path)  # 复制图像到新的文件夹
 
-            modify_yaml_and_run('/root/Dynamic-Style-Change/config/teaser/jeep_watercolor.yaml', new_folder_path, modified_prompt, item['source_prompt'])
+            modify_yaml_and_run('./config/teaser/jeep_watercolor.yaml', new_folder_path, modified_prompt, item['source_prompt'])
 
 
 def modify_yaml_and_run(input_yaml, image_folder, prompt, source_prompt):
@@ -51,15 +51,15 @@ def modify_yaml_and_run(input_yaml, image_folder, prompt, source_prompt):
         yaml.safe_dump(config, f, default_flow_style=False)
 
     # run_your_program()
-    config = "config/teaser/jeep_watercolor.yaml"
+    config = "./config/teaser/jeep_watercolor.yaml"
     Omegadict = OmegaConf.load(config)
     if 'unet' in os.listdir(Omegadict['pretrained_model_path']):
         function_test(config=config, logdir=os.path.join('./result', image_folder.split('/')[-1]), **Omegadict)
 
 
-with open("image700_source2edit_prompt.json", "r") as f:
+with open("./data/image700_source2edit_prompt.json", "r") as f:
     data = json.load(f)
 
-base_directory = "annotation_images"
+base_directory = "./data/annotation_images/"
 new_directory = "/tmp"
 process_json_and_images(data, base_directory, new_directory)

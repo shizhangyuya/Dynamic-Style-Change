@@ -88,6 +88,8 @@ class P2pSampleLogger:
             else:
                 samples_all.append(input_pil_images)
         for idx, prompt in enumerate(tqdm(self.editing_prompts, desc="Generating sample images")):
+            invert = True if idx == 0 else False
+
             if self.prompt2prompt_edit:
                 if self.traverse_p2p_config:
                     p2p_config_now = copy.deepcopy(self.p2p_config[idx])
@@ -128,6 +130,7 @@ class P2pSampleLogger:
                     save_path = save_dir,
                     latents_all=latents_all,
                     total_frame_num=total_frame_num,
+                    invert_stage=invert,
                     **p2p_config_now,
                 )
                 if self.prompt2prompt_edit:
